@@ -1,0 +1,189 @@
+---
+title: "Mortalidade por Dengue no Brasil, 2014–2024"
+author:
+  - name: Patricia M M Bermudi
+    orcid: 0000-0002-5825-6389
+    email: patricia.bermudi@usp.br
+    affiliations:
+      - name: School of Public Health - USP
+format:
+  revealjs:
+    toc: true
+    toc-title: "Sumário da apresentação"
+    logo: img/USP.png
+    theme: solarized
+    footer: "São Paulo, Fevereiro de 2025"
+editor: visual
+bibliography: references.bib
+---
+
+```{r}
+#| label: pacotes
+#| echo: false
+#| warning: false
+library(tidyverse)
+library(kableExtra)
+library(reactable)
+```
+
+```{r}
+#| label: bancos_dados
+#| echo: false
+#| warning: false
+
+df_year <- read.csv2("dados/df_year.csv")
+df_year$rate <- as.double(df_year$rate)
+```
+
+
+
+
+
+## Panorama Global
+
+Segundo a OMS, até 30 de abril de 2024, foram registrados mais de 3000 óbitos por dengue globalmente [@WHO2024].
+
+
+```{r}
+#| label: imagem_internet
+#| echo: false
+#| warning: false
+
+knitr::include_graphics("https://cdn.who.int/media/images/default-source/emergencies/disease-outbreak-news/dengue_global_map.png")
+```
+## Panorama no Brasil
+
+Em 2024, o Brasil registrou um aumento de quatro vezes no número de casos de dengue em comparação com 2023, acompanhado por maior mortalidade [@de2025latin].
+
+No ano mais recente, de `r max(df_year$year, na.rm = TRUE)`, o valor mínimo da taxa de mortalidade foi de `r round(min(df_year$rate[df_year$year == 2024], na.rm = TRUE), 1)` e o valor máximo de `r round(max(df_year$rate[df_year$year == 2024], na.rm = TRUE), 1)`, por 100 mil habitantes.
+
+## Mortalidade em 2024
+<div style="display: flex; justify-content: space-between;">
+
+<!-- Tabela -->
+<div style="width: 30%;">
+
+```{r tabela, echo=FALSE}
+# Código R para gerar a tabela
+t <- df_year %>%
+  filter(region == "Total") %>% 
+  select(year, rate)
+
+reactable(t, 
+          columns = list(
+            year = colDef(name = "Ano"),
+            rate = colDef(name = "Taxa", format = colFormat(digits = 2))
+          ),
+          striped = TRUE, 
+          highlight = TRUE, 
+          bordered = FALSE,  
+          defaultPageSize = 15,
+          height = 400,
+          width = "100%",
+          theme = reactableTheme(
+            backgroundColor = "transparent",  
+            borderColor = "transparent",
+            stripedColor = "rgba(255, 255, 255, 0.1)"
+          )
+)
+```
+
+</div> <!-- Gráfico --> <div style="width: 68%;">
+
+```{r}
+# Código R para gerar o gráfico
+df_year %>%
+  filter(region == "Total") %>%
+  ggplot() +
+  theme_classic() +
+  geom_line(aes(x = year, y = rate)) +
+  labs(
+    title = "Evolução da Taxa de Mortalidade por Dengue",
+    x = "Ano",
+    y = "Taxa de mortalidade por 100 mil-hab."
+  ) +
+  scale_x_continuous(
+    breaks = seq(min(df_year$year, na.rm = TRUE), max(df_year$year, na.rm = TRUE), by = 1),
+    guide = guide_axis(angle = 45)
+  ) +
+  theme(
+    axis.title = element_text(size = 14, face = "bold"),
+    plot.title = element_text(size = 16, face = "bold", hjust = 0.5)
+  )
+```
+
+</div> </div> ```
+
+
+
+
+## Mortalidade por regiões
+
+```{r}
+#| label: grafico
+regioes <- c("Norte", "Nordeste", "Sudeste", "Sul", "Centro-Oeste")
+
+df_year %>%
+  filter(region != "Total") %>% 
+  ggplot() +
+  theme_classic() +  
+  geom_line(aes(x = year, y = rate, color = as.factor(region)), linewidth = 1.2) +  
+  scale_color_manual(
+    values = c("#e41a1c", "#377eb8", "#4daf4a", "#984ea3", "#ff7f00"),  
+    labels = regioes 
+  ) +
+  labs(
+    title = "Evolução da Taxa de Mortalidade por Dengue por Região",
+    x = "Ano",
+    y = "Taxa de mortalidade por 100 mil-hab.",
+    color = "Regiões"
+  ) +
+  scale_x_continuous(
+    breaks = seq(min(df_year$year, na.rm = TRUE), max(df_year$year, na.rm = TRUE), by = 1),
+    guide = guide_axis(angle = 45)  
+  ) +
+  theme(
+    legend.position = "right",  
+    legend.title = element_text(size = 14, face = "bold"),  
+    legend.text = element_text(size = 12),  
+    axis.text = element_text(size = 12),  
+    axis.title = element_text(size = 14, face = "bold"),  
+    plot.title = element_text(size = 16, face = "bold", hjust = 0.5),
+  panel.background = element_rect(fill = NA, color = NA),  
+  plot.background = element_rect(fill = NA, color = NA)
+)
+
+```
+
+## Padrão espacial: analfabetismo e mortalidade 
+
+::: {style="display: flex; justify-content: space-around;"}
+<figure style="width: 48%; text-align: center;">
+
+![](img/map_illiteracy.gif){width="100%"}
+
+<figcaption>Taxa de analfabetismo</figcaption>
+
+</figure>
+
+<figure style="width: 48%; text-align: center;">
+
+![](img/map_mortality.gif){width="100%"} <!-- Ajuste do nome do arquivo para padronização -->
+
+<figcaption>Taxa de Mortalidade</figcaption>
+
+</figure>
+:::
+
+## Fonte de dados para exploração
+
+- [Casos de dengue](http://tabnet.datasus.gov.br/cgi/tabcgi.exe?sinannet/cnv/denguebbr.def)  
+  *Fonte: SINAN/TabNet - DataSUS (2014-2024)*  
+
+- [População e taxa de analfabetismo](https://sidra.ibge.gov.br/pesquisa/censo-demografico/demografico-2022/universo-indigenas-caracteristicas-pessoas-e-domicilios-situacao-urbana-ou-rural)  
+  *Fonte: IBGE/Sidra - Censos Demográficos (2010 e 2022)*
+
+## Referências
+
+::: {#refs}
+:::
