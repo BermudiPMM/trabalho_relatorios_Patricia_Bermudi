@@ -1,189 +1,944 @@
 ---
-title: "Mortalidade por Dengue no Brasil, 2014–2024"
-author:
-  - name: Patricia M M Bermudi
-    orcid: 0000-0002-5825-6389
-    email: patricia.bermudi@usp.br
-    affiliations:
-      - name: School of Public Health - USP
+title: "Material Suplementar"
 format:
-  revealjs:
+  html:
     toc: true
-    toc-title: "Sumário da apresentação"
-    logo: img/USP.png
-    theme: solarized
-    footer: "São Paulo, Fevereiro de 2025"
+    toc-location: left
+    toc-depth: 3
+    number-sections: false
 editor: visual
-bibliography: references.bib
 ---
 
-```{r}
-#| label: pacotes
-#| echo: false
-#| warning: false
-library(tidyverse)
-library(kableExtra)
-library(reactable)
-```
+# Exemplo de aplicação
+
+Os dados utilizados neste exemplo são provenientes do estudo de [Fernandes et al.(2024)](https://www.scielo.br/j/rbepid/a/xvYJvfDNKRkXXYgV47nnJdz/?lang=pt), que avaliaram a gravidez na adolescência no município de Foz do Iguaçu - PR, levando em conta sua distribuição espacial. O conjunto de dados está disponível em [Fernandes et al. (2024b)](https://doi.org/10.6084/m9.figshare.27310467.v2), contendo as seguintes variáveis:
+
+-   `RAZAO2`: Prevalência de mães adolescentes por setor censitário (multiplicada por 100).
+-   `IBP`: Índice Brasileiro de Privação.
+-   `PROPM2`: Proporção de mulheres responsáveis por domicílio (multiplicada por 100).
+
+A seguir, apresentamos os comandos implementados na linguagem R, que oferece recursos completos, tanto para análise descritiva, quanto para análise de dados. Em complemento, exibimos os prints do GeoDa, um software gratuito voltado especificamente para análise espacial, que possibilita a visualização interativa e gráfica dos resultados e os diagnósticos do modelo.
+
+# A. Utilizando linguagem R
+
+## 1. Definir opções para a saída do console
 
 ```{r}
-#| label: bancos_dados
-#| echo: false
-#| warning: false
-
-df_year <- read.csv2("dados/df_year.csv")
-df_year$rate <- as.double(df_year$rate)
+options(scipen = 999)
 ```
 
+## 2. Instalar e carregar bibliotecas
 
+Antes de iniciar as análises, é importante assegurar que todos os pacotes necessários estejam instalados e que os dados do estudo estejam disponíveis no ambiente de trabalho. Para isso, utilizamos dois scripts auxiliares: um para instalar os pacotes e outro para realizar o download dos dados.
 
+```{r, message=FALSE, warning=FALSE}
+# Executar script de instalação de pacotes
+source("Scripts/00_instalar_pacotes.R")
+```
 
+```{r, message=FALSE, warning=FALSE}
+# Executa o script responsável pelo download dos dados utilizados na análise
+source("Scripts/01_download_dados.R") 
+```
 
-## Panorama Global
+Carregar os pacotes utilizados:
 
-Segundo a OMS, até 30 de abril de 2024, foram registrados mais de 3000 óbitos por dengue globalmente [@WHO2024].
+```{r, message=FALSE, warning=FALSE}
+library(tidyverse)  # Manipulação de dados e gráficos
+library(GGally)     # Extensão do ggplot2 para gráficos multivariados
+library(sf)         # Análise de dados espaciais
+library(RcmdrMisc)  # Para a matriz de correlação
+library(tmap)       # Criação de mapas temáticos com dados espaciais
+library(spdep)      # Dependência espacial e autocorrelação
+library(spatialreg) # Modelos de regressão espacial
+library(hnp)        # Para a análise de resíduos 
+```
 
+## 3. Ler e visualizar o mapa com os dados
+
+Ler o shapefile (mapa com dados):
 
 ```{r}
-#| label: imagem_internet
-#| echo: false
-#| warning: false
-
-knitr::include_graphics("https://cdn.who.int/media/images/default-source/emergencies/disease-outbreak-news/dengue_global_map.png")
+setores <- read_sf("dados_figshare/setores_foz.shp") 
 ```
-## Panorama no Brasil
 
-Em 2024, o Brasil registrou um aumento de quatro vezes no número de casos de dengue em comparação com 2023, acompanhado por maior mortalidade [@de2025latin].
+Plotar o mapa para visualização (R base):
 
-No ano mais recente, de `r max(df_year$year, na.rm = TRUE)`, o valor mínimo da taxa de mortalidade foi de `r round(min(df_year$rate[df_year$year == 2024], na.rm = TRUE), 1)` e o valor máximo de `r round(max(df_year$rate[df_year$year == 2024], na.rm = TRUE), 1)`, por 100 mil habitantes.
+```{r}
+plot(st_geometry(setores))
+```
 
-## Mortalidade em 2024
-<div style="display: flex; justify-content: space-between;">
+## 4. Visualizar estrutura dos dados e resumo estatístico
 
-<!-- Tabela -->
-<div style="width: 30%;">
+Visualizar a estrutura e as primeiras linhas do banco de dados:
 
-```{r tabela, echo=FALSE}
-# Código R para gerar a tabela
-t <- df_year %>%
-  filter(region == "Total") %>% 
-  select(year, rate)
+```{r}
+glimpse(setores)
+```
 
-reactable(t, 
-          columns = list(
-            year = colDef(name = "Ano"),
-            rate = colDef(name = "Taxa", format = colFormat(digits = 2))
-          ),
-          striped = TRUE, 
-          highlight = TRUE, 
-          bordered = FALSE,  
-          defaultPageSize = 15,
-          height = 400,
-          width = "100%",
-          theme = reactableTheme(
-            backgroundColor = "transparent",  
-            borderColor = "transparent",
-            stripedColor = "rgba(255, 255, 255, 0.1)"
-          )
+Algumas estatísticas descritivas para as variáveis do banco de dados:
+
+```{r}
+summary(setores)
+```
+
+## 5. Criar dataframe regular
+
+A criação de dataframe regular com apenas as variáveis de interesse, sem espacialização, facilita a realização de algumas operações em R.
+
+```{r}
+setores_df <- setores |>
+        st_drop_geometry() |>               # Remover coluna de geometria
+        as.data.frame() |>                  # Converter para um dataframe regular
+        dplyr::select(RAZAO2, IBP, PROPM2)  # Selecionar as variáveis de interesse
+```
+
+## 6. Análise Exploratória Não Espacial
+
+### 6.1. Descrever cada variável individualmente
+
+#### 6.1.1. Medidas de tendência central e variabilidade
+
+Calcular medidas de tendência central e variabilidade para cada variável e reorganizar os dados para formato tabular:
+
+```{r}
+medidas_tendencia_central <- setores_df  |> 
+        summarise(
+                Média_RAZAO2 = mean(RAZAO2, na.rm = TRUE),      # Calcula a média de RAZAO2, ignorando valores NA
+                Mediana_RAZAO2 = median(RAZAO2, na.rm = TRUE),  # Calcula a mediana de RAZAO2, ignorando valores NA
+                DP_RAZAO2 = sd(RAZAO2, na.rm = TRUE),           # Calcula o desvio padrão de RAZAO2, ignorando valores NA
+                Média_IBP = mean(IBP, na.rm = TRUE),            # Calcula a média de IBP, ignorando valores NA
+                Mediana_IBP = median(IBP, na.rm = TRUE),        # Calcula a mediana de IBP, ignorando valores NA
+                DP_IBP = sd(IBP, na.rm = TRUE),                 # Calcula o desvio padrão de IBP, ignorando valores NA
+                Média_PROPM2 = mean(PROPM2, na.rm = TRUE),      # Calcula a média de PROPM2, ignorando valores NA
+                Mediana_PROPM2 = median(PROPM2, na.rm = TRUE),  # Calcula a mediana de PROPM2, ignorando valores NA
+                DP_PROPM2 = sd(PROPM2, na.rm = TRUE)            # Calcula o desvio padrão de PROPM2, ignorando valores NA
+        ) |> 
+        pivot_longer(
+                cols = everything(),                 # Seleciona todas as colunas para reorganizar
+                names_to = c("Medida", "Variável"),  # Divide os nomes das colunas em "Medida" e "Variável"
+                names_sep = "_",                     # Usa "_" como separador para dividir os nomes das colunas
+                values_to = "Valor"                  # Nome da nova coluna que armazenará os valores
+        ) %>%
+        pivot_wider(
+                names_from = Medida,                 # Transforma os valores da coluna "Medida" em cabeçalhos de coluna
+                values_from = Valor                  # Os valores associados são extraídos da coluna "Valor"
+        )
+
+
+# Criar tabela
+knitr::kable(
+        medidas_tendencia_central,                                           # Dataframe que contém os dados reorganizados
+        format = "html",                                                     # Especifica o formato da tabela 
+        caption = "Medidas de tendência central e variabilidade para variáveis selecionadas" # Adiciona uma legenda à tabela
 )
 ```
 
-</div> <!-- Gráfico --> <div style="width: 68%;">
+#### 6.1.2. Gráficos: Histograma, Box-plot e Dotplot
+
+#### *Variável resposta: Prevalência de mães adolescentes*
+
+##### Histograma
 
 ```{r}
-# Código R para gerar o gráfico
-df_year %>%
-  filter(region == "Total") %>%
-  ggplot() +
-  theme_classic() +
-  geom_line(aes(x = year, y = rate)) +
-  labs(
-    title = "Evolução da Taxa de Mortalidade por Dengue",
-    x = "Ano",
-    y = "Taxa de mortalidade por 100 mil-hab."
-  ) +
-  scale_x_continuous(
-    breaks = seq(min(df_year$year, na.rm = TRUE), max(df_year$year, na.rm = TRUE), by = 1),
-    guide = guide_axis(angle = 45)
-  ) +
-  theme(
-    axis.title = element_text(size = 14, face = "bold"),
-    plot.title = element_text(size = 16, face = "bold", hjust = 0.5)
-  )
+ggplot(setores_df, aes(x = RAZAO2)) +                                    # Define a variável 'RAZAO2' no eixo x
+        geom_histogram(fill = "lightblue", color = "black", bins = 20) + # Cria o histograma com cor de preenchimento e borda, bins = número de barras
+        labs(
+                x = "Prevalência de mães adolescentes",                  # Título do eixo x
+                y = "Número de setores") +                               # Título do eixo y
+        theme_minimal()                                                  # Aplica o tema minimal gráfico
 ```
 
-</div> </div> ```
-
-
-
-
-## Mortalidade por regiões
+##### Box-plot
 
 ```{r}
-#| label: grafico
-regioes <- c("Norte", "Nordeste", "Sudeste", "Sul", "Centro-Oeste")
+ggplot(setores_df, aes(y = RAZAO2)) +                 # Cria o gráfico com 'RAZAO2' no eixo y
+        geom_boxplot() +                                    # Adiciona o box-plot
+        labs(y = "Prevalência de mães adolescentes") +      # Define o título e o rótulo do eixo y
+        theme_minimal() +                                   # Aplica o tema minimal gráfico
+        theme(axis.text.x = element_blank())                # Remove os rótulos do eixo x
+```
 
-df_year %>%
-  filter(region != "Total") %>% 
-  ggplot() +
-  theme_classic() +  
-  geom_line(aes(x = year, y = rate, color = as.factor(region)), linewidth = 1.2) +  
-  scale_color_manual(
-    values = c("#e41a1c", "#377eb8", "#4daf4a", "#984ea3", "#ff7f00"),  
-    labels = regioes 
-  ) +
-  labs(
-    title = "Evolução da Taxa de Mortalidade por Dengue por Região",
-    x = "Ano",
-    y = "Taxa de mortalidade por 100 mil-hab.",
-    color = "Regiões"
-  ) +
-  scale_x_continuous(
-    breaks = seq(min(df_year$year, na.rm = TRUE), max(df_year$year, na.rm = TRUE), by = 1),
-    guide = guide_axis(angle = 45)  
-  ) +
-  theme(
-    legend.position = "right",  
-    legend.title = element_text(size = 14, face = "bold"),  
-    legend.text = element_text(size = 12),  
-    axis.text = element_text(size = 12),  
-    axis.title = element_text(size = 14, face = "bold"),  
-    plot.title = element_text(size = 16, face = "bold", hjust = 0.5),
-  panel.background = element_rect(fill = NA, color = NA),  
-  plot.background = element_rect(fill = NA, color = NA)
+##### Dotplot
+
+```{r}
+# Gera uma sequência de números de 1 até o número de linhas do dataframe, representando a ordem das observações que serão plotadas no eixo Y de cada um dos dotplot
+ordem_observacoes <- 1:nrow(setores_df) 
+
+ggplot(setores_df,                                      # Cria o gráfico com 'RAZAO2' no eixo x e 'ordem_observacoes' no eixo y
+       aes(y = ordem_observacoes, x = RAZAO2)) +                                      
+        geom_point() +                                  # Adiciona os pontos ao gráfico
+        theme_minimal() +                               # Aplica o tema minimal
+        labs( x = "Prevalência de mães adolescentes",
+              y = "Ordem das observações")              # Define os rótulos dos eixos
+```
+
+O box-plot e o dotplot apontam a existência de *outliers* na variável resposta. Deve-se investigar cada um e avaliar sua influência nas estimativas do modelo.
+
+#### *Covariável: Índice Brasileiro de Privação*
+
+##### Histograma
+
+```{r}
+ggplot(setores_df, aes(x = IBP)) +                                       # Define a variável 'IBP' no eixo x
+        geom_histogram(fill = "lightblue", color = "black", bins = 20) + # Cria o histograma com cor de preenchimento e borda, bins = número de barras
+        labs(
+                x = "Índice Brasileiro de Privação",                     # Título do eixo x
+                y = "Número de setores"                                  # Título do eixo y
+        ) +
+        theme_minimal() +                                                # Aplica o tema minimal gráfico
+        theme(axis.text.x = element_blank())                             # Remove os rótulos do eixo x
+```
+
+##### Box-plot
+
+```{r}
+ggplot(setores_df, aes(y = IBP)) +                          # Cria o gráfico com 'IBP' no eixo y
+        geom_boxplot() +                                    # Adiciona o box-plot
+        labs(y = "Índice Brasileiro de Privação") +         # Define o rótulo do eixo y
+        theme_minimal() +                                   # Aplica o tema minimal gráfico
+        theme(axis.text.x = element_blank())                # Remove os rótulos do eixo x
+```
+
+##### Dotplot
+
+```{r}
+ggplot(setores_df,                                      # Cria o gráfico com 'IBP' no eixo x e 'ordem_observacoes' no eixo y
+       aes(y = ordem_observacoes, x = IBP)) +                                      
+        geom_point() +                                  # Adiciona os pontos ao gráfico
+        theme_minimal() +                               # Aplica o tema minimal
+        labs(x = "Índice Brasileiro de Privação",
+             y = "Ordem das observações")               # Define os rótulos dos eixos  
+
+```
+
+O box-plot e o dotplot apontam a existência de *outliers* na variável resposta. Deve-se investigar cada um e avaliar sua influência nas estimativas do modelo.
+
+#### *Covariável: Proporção de mulheres responsáveis pelo domicílio*
+
+##### Histograma
+
+```{r}
+ggplot(setores_df, aes(x = PROPM2)) +                                    # Define a variável PROPM2 no eixo x
+        geom_histogram(fill = "lightblue", color = "black", bins = 20) + # Cria o histograma com cor de preenchimento e borda, bins = número de barras
+        labs(
+                x = "Proporção de mulheres responsáveis por domicílio",  # Título do eixo x
+                y = "Número de setores"                                  # Título do eixo y
+        ) +                                                              
+        theme_minimal()                                                  # Aplica o tema minimal
+```
+
+##### Box-plot
+
+```{r}
+ggplot(setores_df, aes(y = PROPM2)) +                                  # Cria o gráfico com 'PROPM2' no eixo y
+        geom_boxplot() +                                               # Adiciona o box-plot
+        labs(y = "Proporção de mulheres responsáveis por domicílio") + # Define o rótulo do eixo y
+        theme_minimal() +                                              # Aplica o tema minimal gráfico
+        theme(axis.text.x = element_blank())                           # Remove os rótulos do eixo x
+```
+
+##### Dotplot
+
+```{r}
+ggplot(setores_df,                                         # Cria o gráfico com 'PROPM2' no eixo x e 'ordem_observacoes' no eixo y
+       aes(y = ordem_observacoes, x = PROPM2)) +                                      
+        geom_point() +                                     # Adiciona os pontos ao gráfico
+        theme_minimal() +                                  # Aplica o tema minimal
+        labs(
+                x = "Proporção de mulheres responsáveis por domicílio",
+                y = "Ordem das observações")               # Define os rótulos dos eixos  
+```
+
+O box-plot e o dotplot apontam a existência de *outliers* na variável resposta. Deve-se investigar cada um e avaliar sua influência nas estimativas do modelo.
+
+### 6.2. Descrever as associações da resposta com cada covariável, bem como das covariáveis entre si
+
+Como todas as covariáveis são quantitativas, serão utilizados apenas diagramas de dispersão e coeficientes de correlação.
+
+##### Diagramas de dispersão
+
+Nesses gráficos, a variável que acredita-se depender da outra deve sempre ser alocada no eixo y.
+
+#### *Variável resposta (RAZAO2) x PROPM2*
+
+```{r}
+ggplot(data = setores_df, mapping = aes(x = PROPM2, y = RAZAO2)) +
+        geom_point(color = "black") +                                                                 # Pontos para cada observação
+        geom_smooth(aes(color = "Linha suavizada"), se = FALSE) +                                     # Linha de suavização (loess) sem banda de confiança
+        geom_smooth(aes(color = "Reta de regressão e bandas de confiança"), method = lm) +            # Regressão linear com banda de confiança
+        scale_color_manual(                                                                           # Define cores manualmente para cada linha representada na legenda
+                values = c(
+                        "Linha suavizada" = "orange",
+                        "Reta de regressão e bandas de confiança" = "blue"
+                ) 
+        ) +
+        labs(
+                x = "Proporção de mulheres responsáveis pelo domicílio",                              # Eixo x com unidade
+                y = "Prevalência de mães adolescentes"                                                # Eixo y com unidade
+        ) +
+        theme_minimal() +                                                 # Aplica tema minimal
+        theme(legend.position = "bottom",                                 # Posiciona a legenda abaixo do gráfico
+              legend.title = element_blank())                             # Remove o título da legenda
+```
+
+O diagrama sugere uma relação linear entre a variável resposta (RAZAO2) e a PROPM2: a prevalência de mães adolescentes aumenta à medida que aumenta a proporção de mulheres responsáveis pelo domicílio.
+
+#### *Variável resposta (RAZAO2) x IBP*
+
+```{r}
+ggplot(data = setores_df, mapping = aes(x = IBP, y = RAZAO2)) +
+        geom_point(color = "black") +                                                                 # Pontos para cada observação
+        geom_smooth(aes(color = "Linha suavizada"), se = FALSE) +                                     # Linha de suavização (loess) sem banda de confiança
+        geom_smooth(aes(color = "Reta de regressão e bandas de confiança"), method = lm) +            # Regressão linear com banda de confiança
+        scale_color_manual(                                                                           # Define cores manualmente para cada linha representada na legenda
+                values = c(
+                        "Linha suavizada" = "orange",
+                        "Reta de regressão e bandas de confiança" = "blue"
+                ) 
+        ) +
+        labs(
+                x = "Índice Brasileiro de Privação",               # Eixo x com unidade
+                y = "Prevalência de mães adolescentes"             # Eixo y com unidade
+        ) +
+        theme_minimal() +                                                 # Aplica tema minimal
+        theme(legend.position = "bottom",                                 # Posiciona a legenda no topo do gráfico
+              legend.title = element_blank())                             # Remove o título da legenda
+```
+
+O diagrama sugere uma relação linear entre a variável resposta (RAZAO2) e o IBP: a prevalência de mães adolescentes aumenta à medida que aumenta o Índice Brasileiro de Privação.
+
+#### *PROPM2 x IBP*
+
+```{r}
+ggplot(data = setores_df, mapping = aes(x = IBP, y = PROPM2)) +
+        geom_point(color = "black") +                                                                 # Pontos para cada observação
+        geom_smooth(aes(color = "Linha suavizada"), se = FALSE) +                                     # Linha de suavização (loess) sem banda de confiança
+        geom_smooth(aes(color = "Reta de regressão e bandas de confiança"), method = lm) +            # Regressão linear com banda de confiança
+        scale_color_manual(                                                                           # Define cores manualmente para cada linha representada na legenda
+                values = c(
+                        "Linha suavizada" = "orange",
+                        "Reta de regressão e bandas de confiança" = "blue"
+                ) 
+        ) +
+        labs(
+                x = "Índice Brasileiro de Privação",                                  # Eixo x com unidade
+                y = "Proporção de mulheres responsáveis pelo domicílio"               # Eixo y com unidade
+        ) +
+        theme_minimal() +                                                 # Aplica tema minimal
+        theme(legend.position = "bottom",                                 # Posiciona a legenda abaixo do gráfico
+              legend.title = element_blank())                             # Remove o título da legenda
+```
+
+O diagrama sugere uma relação linear entre as covariáveis PROPM2 e IBP: A proporção de mulheres responsáveis pelo domicílio aumenta levemente à medida que aumenta o Índice Brasileiro de Privação.
+
+##### Matriz de correlação de Pearson
+
+```{r}
+rcorr.adjust(setores_df[,c("RAZAO2", "IBP", "PROPM2" )], type = "pearson", use = "complete")
+```
+
+Uma vez que as associações observadas nos diagramas de dispersão são lineares, os coeficientes de correlação podem ser interpretados da forma usual. Os coeficientes sugerem uma associação linear entre a variável resposta (RAZAO2) e as covariáveis IBP (moderada) e PROPM2 (fraca).
+
+##### Matriz de dispersão e correlação de Pearson
+
+Ao criar a matriz, deve-se especificar as variáveis na ordem correta, a fim de que a variável que acredita-se depender da outra esteja alocada no eixo y.
+
+```{r}
+ggpairs(
+        setores_df[, c("IBP", "PROPM2", "RAZAO2")],   # Selecione a variável resposta e as covariáveis de interesse
+        upper = list(continuous = "cor"),             # Exibe a correlação de Pearson no painel superior
+        lower = list(continuous = "smooth"),          # Exibe gráficos de dispersão com linha de suavização no painel inferior
+        diag = list(continuous = "densityDiag"),      # Exibe histogramas de densidade no painel diagonal
+        title = "Avaliação gráfica das relações entre variável resposta e covariáveis"  # Título do gráfico
+)
+```
+
+### 6.3. Avaliar a normalidade da variável resposta
+
+##### Qq-plot
+
+```{r}
+ggplot(setores_df, aes(sample = RAZAO2)) +
+        stat_qq() +                                          # Plota os pontos dos quantis observados x teóricos (distribuição normal)
+        stat_qq_line() +                                     # Adiciona a linha de referência para uma distribuição normal
+        labs(y = "Prevalência de mães adolescentes",         # Título do eixo Y
+             x = "Quantis da distribuição normal padrão") +  # Título do eixo X
+        theme_minimal()                                      # Aplica tema minimal
+```
+
+Há desvio da normalidade nas extremidades (valores muito grandes ou muito pequenos de RAZAO2). Após o ajuste do modelo, deve-se verificar se os resíduos ainda apresentam desvio de normalidade.
+
+##### Teste de normalidade de Kolmogorov-Smirnov
+
+```{r}
+ks.test(setores_df$RAZAO2, "pnorm", mean(setores_df$RAZAO2), sd(setores_df$RAZAO2))
+```
+
+O p-valor é pouco menor do que 0,05, indicando desvio da normalidade. Após o ajuste do modelo, deve-se verificar se os resíduos ainda apresentam desvio de normalidade. Se isso ocorrer, o modelo não será adequado e será necessário buscar outros modelos mais adequados.
+
+## 7. Análise Exploratória Espacial
+
+### 7.1. Mapas temáticos
+
+Visualizar a distribuição espacial das variáveis de interesse:
+
+```{r}
+# Adicionar interação
+tmap_mode("view") 
+
+# Criar mapa para a variável RAZAO2)
+
+map_razao2 <- tm_shape(setores) +                                         # Define o conjunto de dados geográficos
+        tm_polygons(
+                fill = "RAZAO2",                                          # Define a variável para o preenchimento dos polígonos
+                fill.scale = tm_scale(values = "brewer.blues"),           # Aplica a escala de cores
+                fill.legend = tm_legend(title = "RAZAO2")                 # Define o título da legenda
+        ) +  
+        tm_title("Variável resposta") +                             # Adiciona um título ao mapa
+        tm_layout(legend.outside = TRUE)                            # Mantém a legenda fora do mapa
+
+
+# Criar mapa para a variável IBP
+map_ibp <- tm_shape(setores) +  
+        tm_polygons(
+                fill = "IBP",                                         # Define a variável para o preenchimento dos polígonos
+                fill.scale = tm_scale(values = "brewer.greens"),      # Aplica a escala de cores
+                fill.legend = tm_legend(title = "IBP"),               # Define o título da legenda
+                col = "black"                                         # Define a cor das bordas dos polígonos
+        ) +  
+        tm_title("Covariáveis") +                               # Adiciona um título ao mapa
+        tm_layout(legend.outside = TRUE)                        # Mantém a legenda fora do mapa
+
+# Criar mapa para a variável PROPM2
+map_propm2 <- tm_shape(setores) +  
+        tm_polygons(
+                fill = "PROPM2",                                      # Define a variável para o preenchimento dos polígonos
+                fill.scale = tm_scale(values = "brewer.reds"),        # Aplica a escala de cores
+                fill.legend = tm_legend(title = "PROPM2"),            # Define o título da legenda
+                col = "black"                                         # Define a cor das bordas dos polígonos
+        ) +  
+        tm_title("Covariáveis") +                               # Adiciona um título ao mapa
+        tm_layout(legend.outside = TRUE)                        # Mantém a legenda fora do mapa
+
+# Mostrar mapa para a variável desfecho RAZAO2
+map_razao2
+
+# Mostrar os mapas das covariáveis lado a lado
+tmap_arrange(map_ibp, map_propm2)
+```
+
+### 7.2. Dependência espacial da variável resposta
+
+#### 7.2.1. Matriz de vizinhança espacial
+
+Criar a matriz de vizinhança do tipo "queen" (considera vizinhos que compartilham borda ou vértice):
+
+```{r}
+matriz_viz_queen <- poly2nb(setores, queen = TRUE) # Cria matriz de vizinhança usando critério "queen"
+print(matriz_viz_queen)                            # Exibe dados da matriz de vizinhança
+```
+
+Plotar mapa de vizinhos com base na contiguidade "queen":
+
+```{r, fig.width=12, fig.height=10}
+# Plotar a geometria dos setores espaciais com bordas em cinza
+plot(st_geometry(setores), border = "gray")
+# Adicionar as conexões de vizinhança ao mapa anterior (`matriz_viz_queen`: vizinhos espaciais, `st_geometry(setores)`: coordenadas dos setores)
+plot.nb(matriz_viz_queen, st_geometry(setores), add = TRUE) 
+```
+
+Criar histograma mostrando a distribuição do número de vizinhos por setor censitário:
+
+```{r}
+# Contar o número de vizinhos por setor (função card() do pacote spdep)
+vizinhos <- data.frame(id_setores = 1:nrow(setores),       # Identificação dos setores
+                       n_vizinhos = card(matriz_viz_queen) # Número de vizinhos por setor
 )
 
+# Criar o histograma
+ggplot(vizinhos, aes(x = n_vizinhos)) +
+        geom_histogram(binwidth = 1, fill = "lightblue", color = "black") +        # Cria o histograma com cor de preenchimento e borda, binwidth = tamanho das barras
+        scale_x_continuous(
+                breaks = seq(min(vizinhos$n_vizinhos), max(vizinhos$n_vizinhos), by = 1) # Garante que todos os valores de x sejam plotados
+        ) +
+        labs(
+                x = "Número de vizinhos",                                                # Rótulo do eixo x
+                y = "Frequência"                                                         # Rótulo do eixo y
+        ) +
+        theme_minimal() +                                                          # Aplica tema minimal
+        theme(axis.text.x = element_text(angle = 0, hjust = 0.5))                  # Ajusta angulação e ajuste horizontal do texto no eixo x
 ```
 
-## Padrão espacial: analfabetismo e mortalidade 
+Criar a matriz de pesos espaciais correspondente à vizinhança:
 
-::: {style="display: flex; justify-content: space-around;"}
-<figure style="width: 48%; text-align: center;">
+```{r}
+matriz_pesos <- nb2listw(matriz_viz_queen, style = "W", zero.policy = TRUE) # Cria matriz de pesos: "W" normaliza os pesos por linha, zero.policy = TRUE permite incluir unidades sem vizinhos
+summary(matriz_pesos)                                                       # Exibe resumo dos pesos espaciais
+```
 
-![](img/map_illiteracy.gif){width="100%"}
+#### 7.2.2. Índice de Moran Global (I Moran)
 
-<figcaption>Taxa de analfabetismo</figcaption>
+Avaliar a dependência espacial da variável resposta (RAZAO2) usando I Moran:
 
-</figure>
+```{r}
+# Teste de Moran para RAZAO2
+moran_gl <- moran.test(
+        setores$RAZAO2,           # Variável de interesse
+        matriz_pesos,             # Matriz de pesos espaciais
+        alternative = "greater"   # H0: ausência de autocorrelação ou autocorrelação negativa; HA: presença de autocorrelação positiva
+)
+# Exibir resultado
+moran_gl                               
+```
 
-<figure style="width: 48%; text-align: center;">
+Abordagem de Monte Carlo para avaliar significância de I Moran:
 
-![](img/map_mortality.gif){width="100%"} <!-- Ajuste do nome do arquivo para padronização -->
+```{r}
+# Realizar a simulação de Monte Carlo
+mc_moran_gl <- moran.mc(setores$RAZAO2, # Variável de interesse
+                        matriz_pesos,   # Matriz de pesos espaciais
+                        nsim = 999)     # Número de simulações aleatórias
+# Exibir resultado
+mc_moran_gl
+```
 
-<figcaption>Taxa de Mortalidade</figcaption>
+Criar histograma dos valores de I Moran estimados para padrões simulados na abordagem de Monte Carlo:
 
-</figure>
-:::
+```{r}
+hist(
+        mc_moran_gl$res,                           # Dados simulados de I Moran
+        main = "Histograma dos valores simulados de I de Moran", # Título do gráfico
+        xlab = "I de Moran (simulado)",            # Rótulo do eixo X
+        ylab = "Frequência",                       # Rótulo do eixo Y
+        col = "skyblue",                           # Cor das barras do histograma
+        border = "white",                          # Cor das bordas das barras
+        breaks = 30                                # Número de intervalos (bins) no histograma
+)
+# Adicionar linha representando o valor observado de I Moran
+abline(v = mc_moran_gl$statistic,            # Valor de I Moran observado nos dados reais
+       col = "red",                          # Cor da linha
+       lwd = 2,                              # Espessura da linha
+       lty = 2)                              # Tipo de linha (traço-ponto)
+text(x = mc_moran_gl$statistic,              # Coordenada X para o texto
+     y = max(hist(mc_moran_gl$res,
+                  plot = FALSE)$counts),     # Coordenada Y ajustada ao topo do histograma
+     labels = "I observado",                 # Texto para indicar o valor observado
+     col = "red",                            # Cor do texto
+     pos = 4,                                # Posição relativa ao ponto (à direita da linha)
+     cex = 0.8)                              # Tamanho do texto
+```
 
-## Fonte de dados para exploração
+Criar gráfico de dispersão do I Moran para visualizar a autocorrelação espacial dos dados, mostrando como os valores de cada área estão relacionados aos valores médios das áreas vizinhas:
 
-- [Casos de dengue](http://tabnet.datasus.gov.br/cgi/tabcgi.exe?sinannet/cnv/denguebbr.def)  
-  *Fonte: SINAN/TabNet - DataSUS (2014-2024)*  
+```{r}
+moran.plot(
+        setores$RAZAO2,                                   # Variável de interesse
+        matriz_pesos,                                     # Matriz de pesos espaciais
+        labels = FALSE,                                   # Remove os rótulos das observações
+        main = "Gráfico de dispersão do Índice de Moran", # Título do gráfico
+        xlab = "RAZAO2 (Valor observado)",                # Rótulo do eixo X
+        ylab = "RAZAO2 (Valor médio dos vizinhos)"        # Rótulo do eixo Y
+)
+```
 
-- [População e taxa de analfabetismo](https://sidra.ibge.gov.br/pesquisa/censo-demografico/demografico-2022/universo-indigenas-caracteristicas-pessoas-e-domicilios-situacao-urbana-ou-rural)  
-  *Fonte: IBGE/Sidra - Censos Demográficos (2010 e 2022)*
+A dependência espacial da variável resposta (neste caso, a prevalência de mães adolescentes) foi analisada por meio do Índice de Moran (I de Moran), que revela padrões não aleatórios na distribuição dos casos de gravidez na adolescência nos setores censitários. Isso indica que os setores próximos tendem a apresentar valores semelhantes de prevalência, sugerindo a formação de agrupamentos espaciais (*clusters*). Esses agrupamentos indicam que fatores espaciais podem estar influenciando as taxas de gravidez entre adolescentes, resultando em uma distribuição espacialmente correlacionada. Para identificar as áreas com *clusters* significativos e *outliers* espaciais, pode-se complementar a análise utilizando o Índice de Moran Local (LISA), que fornece uma visão mais detalhada da variação espacial dentro das diferentes regiões do estudo.
 
-## Referências
+## 8. Análise Inferencial
 
-::: {#refs}
-:::
+### 8.1. Ajuste do Modelo de Regressão Linear (MRL)
+
+```{r}
+mod.lm <- lm(
+        RAZAO2 ~ IBP + PROPM2,   # Fórmula: variável dependente 'RAZAO2' e covariáveis 'IBP' e 'PROPM2'
+        data = setores_df        # Base de dados: 'setores_df'
+)
+
+# Exibir resumo dos resultados do modelo
+summary(mod.lm)
+```
+
+### 8.2. Avaliar a qualidade do ajuste: análise de resíduos
+
+```{r}
+# Colocar os valores ajustados e os resíduos padronizados no banco de dados
+ setores_df$valor_aju <- fitted.values(mod.lm)
+ setores_df$residuo_pad <- rstandard(mod.lm)
+```
+
+Diagrama de dispersão dos resíduos padronizados em função da covariável Índice Brasileiro de Privação:
+
+```{r}
+ggplot(setores_df, mapping = aes(x = IBP, y = residuo_pad)) +
+        geom_point() +
+        geom_hline(yintercept = 0, linetype = "dashed", color = "red") +     # Linha horizontal em y=0
+        geom_hline(yintercept = -1.96, linetype = "dashed", color = "red") + # Linha horizontal em y=-1,96
+        geom_hline(yintercept = 1.96, linetype = "dashed", color = "red") +  # Linha horizontal em y=1,96
+        labs(
+                x = "Índice Brasileiro de Privação",                         # Rótulo do eixo x
+                y = "Resíduos padronizados"                                  # Rótulo do eixo y
+        ) +
+        theme_minimal()                                                      # Aplica tema minimal
+```
+
+Diagrama de dispersão dos resíduos padronizados em função da covariável Proporção de mulheres responsáveis pelo domicílio:
+
+```{r}
+ggplot(setores_df, mapping = aes(x = PROPM2, y = residuo_pad)) +
+        geom_point() +
+        geom_hline(yintercept = 0, linetype = "dashed", color = "red") +      # Linha horizontal em y=0
+        geom_hline(yintercept = -1.96, linetype = "dashed", color = "red") +  # Linha horizontal em y=-1,96
+        geom_hline(yintercept = 1.96, linetype = "dashed", color = "red") +   # Linha horizontal em y=1,96
+        labs(
+                x = "Proporção de mulheres responsáveis pelo domicílio",                                       # Rótulo do eixo x
+                y = "Resíduos padronizados"                                   # Rótulo do eixo y
+        ) +
+        theme_minimal()                                                       # Aplica tema minimal
+```
+
+Diagrama de dispersão dos resíduos padronizados em função dos valores ajustados:
+
+```{r}
+ggplot(setores_df, mapping = aes(x=valor_aju, y=residuo_pad)) +
+        geom_point() +
+        geom_hline(yintercept = 0, linetype = "dashed", color = "red") +     # Linha horizontal em y=0
+        geom_hline(yintercept = -1.96, linetype = "dashed", color = "red") + # Linha horizontal em y=-1,96
+        geom_hline(yintercept = 1.96, linetype = "dashed", color = "red") +  # Linha horizontal em y=1,96
+        labs(
+                x = "Valores ajustados",                                     # Rótulo do eixo x
+                y = "Resíduos padronizados"                                  # Rótulo do eixo y
+        ) +
+        theme_minimal()                                                      # Aplica tema minimal
+```
+
+Nos três gráficos, os resíduos apresentam-se distribuídos aleatoriamente em torno de zero, sem evidência de heterocedasticidade, com alguns *outliers*. Será necessário avaliar sua influência nas estimativas do modelo final
+
+Histograma dos resíduos padronizados:
+
+```{r}
+ggplot(setores_df, aes(x = residuo_pad)) +                              
+        geom_histogram(fill = "lightblue", color = "black", bins = 20) + # Cria o histograma com cor de preenchimento e borda, bins = número de barras
+        labs(
+                x = "Resíduo padronizado",                               # Título do eixo x
+                y = "Número de setores"                                  # Título do eixo y
+        ) +                                                              
+        theme_minimal()                                                  # Aplica o tema minimal
+```
+
+Qq-plot para os resíduos:
+
+```{r}
+hnp(rstandard(mod.lm))
+```
+
+Teste de normalidade dos resíduos:
+
+```{r}
+ks.test(setores_df$residuo_pad, "pnorm")
+```
+
+Teste de Moran para os resíduos do modelo:
+
+O teste de Moran foi aplicado aos resíduos do modelo, considerando como hipótese nula I de Moran = 0 e como hipótese alternativa I de Moran \> 0, correspondente ao argumento ’ alternative = “greater”‘, que é o padrão da função ’lm.morantest’. Essa configuração está alinhada ao interesse do presente estudo em detectar autocorrelação espacial positiva
+
+```{r}
+lm.morantest(mod.lm, matriz_pesos) # Teste de Moran para os resíduos modelo OLS
+```
+
+A identificação de dependência espacial nos resíduos da regressão linear indica que, mesmo após considerar as variáveis explicativas no modelo, ainda há padrões espaciais não explicados. Isso é uma violação dos pressupostos da regressão linear clássica, que presume que os resíduos sejam independentes e identicamente distribuídos (i.i.d.). A presença de dependência nos resíduos sugere que o modelo inicial não capturou totalmente a estrutura espacial dos dados.
+
+### 8.3. Diagnóstico de Lagrange (LM)
+
+Realizar o Diagnóstico de Lagrange (LM) para detectar dependência espacial nos resíduos do MRL:
+
+```{r}
+razao.lagr <- lm.RStests(mod.lm, matriz_pesos, test = c("LMerr", "RLMerr", "LMlag", "RLMlag"))
+
+# Exibir os resultados completos dos testes LM
+razao.lagr
+
+# Acessar e exibir o p-valor para o teste LM de erro espacial
+p_val_RSerr <- razao.lagr$RSerr["p.value"] 
+print(paste("p-valor do teste LMerr (Erro espacial):", p_val_RSerr))
+
+p_val_RSlag <- razao.lagr$RSlag["p.value"] # Acessar p-valor Teste de Lagrange Multiplier para erro espacial
+print(p_val_RSlag)
+
+# Acessar e exibir o p-valor para o teste LM de defasagem espacial
+p_val_RSlag <- razao.lagr$RSlag["p.value"] # Testa se há dependência espacial nos valores ajustados
+print(paste("p-valor do teste LMlag (Defasagem espacial):", p_val_RSlag))
+```
+
+-   LMerr (RSerr): Teste de Lagrange Multiplier para erro espacial (teste se os resíduos têm autocorrelação espacial que pode ser modelada com um modelo de erro espacial).
+-   RLMerr (adjRSerr): Teste robusto de Lagrange Multiplier para erro espacial.
+-   LMlag (RSlag): Teste de Lagrange Multiplier para defasagem espacial (teste se a variável resposta tem autocorrelação espacial que pode ser modelada com um modelo de defasagem espacial).
+-   RLMlag (adjRSlag): Teste robusto de Lagrange Multiplier para defasagem espacial.
+
+Os testes de Lagrange Multiplier auxiliam a identificar qual tipo de dependência espacial está presente. Eles distinguem se a dependência ocorre na variável dependente, caso em que o teste LMlag favorece a especificação de um modelo SAR, ou se está concentrada nos termos de erro, situação em que o teste LMerr indica a adequação de um modelo SEM. Quando ambos os efeitos podem estar presentes, os testes robustos RLMlag e RLMerr permitem verificar qual componente é mais relevante. Para ver o passo a passo do processo de escolha do modelo, consulte o fluxograma do artigo, na Figura 1.
+
+No nosso exemplo, o teste LMlag apresentou valor de p menor que 0.05, enquanto o teste LMerr apresentou valor de p maior que 0.05. Dessa forma, a indicação foi pela adoção do modelo SAR.
+
+
+### 8.4. Ajuste do Modelo de Defasagem Espacial (SAR)
+
+Ajustar o modelo de defasagem espacial SAR considerando as variáveis explicativas 'IBP' e 'PROPM2':
+
+```{r}
+mod.lag <- lagsarlm(RAZAO2 ~ IBP + PROPM2, # Ajusta modelo de defasagem espacial
+                    data = setores,
+                    listw = matriz_pesos)  # A matriz de pesos espaciais 'matriz_pesos' é usada para levar em conta a dependência espacial
+
+# Exibe resultados do modelo de defasagem espacial
+summary(mod.lag)
+
+# Calcula e exibe intervalos de confiança para os coeficientes do modelo de defasagem espacial 
+confint(mod.lag)                                                           
+```
+
+Os coeficientes indicam que a cada aumento de uma unidade no Índice Brasileiro de Privação (IBP) espera-se um aumento médio de 3,78 % na prevalência de mães adolescentes (RAZAO2), independente da proporção de mulheres responsáveis pelo domicílio. De forma semelhante, a cada aumento de um ponto percentual na proporção de mulheres responsáveis pelo domicílio espera-se um aumento médio de 0,086 % na prevalência de mães adolescentes,  independente do IBP.
+
+### 8.5. Análise de resíduos do modelo de defasagem espacial
+
+```{r}
+ # Colocar os valores ajustados e os resíduos padronizados no banco de dados
+ setores_df$valor_aju_lag <- fitted.values(mod.lag)
+ setores_df$residuo_pad_lag <- (mod.lag$residuals - mean(mod.lag$residuals))/sqrt(mod.lag$s2)
+```
+
+Diagrama de dispersão dos resíduos padronizados em função da covariável Índice Brasileiro de Privação:
+
+```{r}
+ggplot(setores_df, mapping = aes(x = IBP, y = residuo_pad_lag)) +
+        geom_point() +
+        geom_hline(yintercept = 0, linetype = "dashed", color = "red") +     # Linha horizontal em y=0
+        geom_hline(yintercept = -1.96, linetype = "dashed", color = "red") + # Linha horizontal em y=-1.96
+        geom_hline(yintercept = 1.96, linetype = "dashed", color = "red") +  # Linha horizontal em y=1.96
+        labs(
+                x = "Índice Brasileiro de Privação",                               # Rótulo do eixo x
+                y = "Resíduos padronizados"                                        # Rótulo do eixo y
+        ) +
+        theme_minimal()                                                      # Aplica tema minimal
+```
+
+Diagrama de dispersão dos resíduos padronizados em função da covariável Proporção de mulheres responsáveis pelo domicílio:
+
+```{r}
+ggplot(setores_df, mapping = aes(x = PROPM2, y = residuo_pad_lag)) +
+        geom_point() +
+        geom_hline(yintercept = 0, linetype = "dashed", color = "red") +      # Linha horizontal em y=0
+        geom_hline(yintercept = -1.96, linetype = "dashed", color = "red") +  # Linha horizontal em y=-1,96
+        geom_hline(yintercept = 1.96, linetype = "dashed", color = "red") +   # Linha horizontal em y=1,96
+        labs(
+                x = "Proporção de mulheres responsáveis pelo domicílio",                                       # Rótulo do eixo x
+                y = "Resíduos padronizados"                                   # Rótulo do eixo y
+        ) +
+        theme_minimal()                                                       # Aplica tema minimal
+```
+Diagrama de dispersão dos resíduos padronizados em função dos valores ajustados:
+
+```{r}
+ggplot(setores_df, mapping = aes(x=valor_aju_lag, y=residuo_pad_lag)) +
+        geom_point() +
+        geom_hline(yintercept = 0, linetype = "dashed", color = "red") +     # Linha horizontal em y=0
+        geom_hline(yintercept = -1.96, linetype = "dashed", color = "red") + # Linha horizontal em y=-1.96
+        geom_hline(yintercept = 1.96, linetype = "dashed", color = "red") +  # Linha horizontal em y=1.96
+        labs(
+                x = "Valores ajustados",                                     # Rótulo do eixo x
+                y = "Resíduos padronizados"                                  # Rótulo do eixo y
+        ) +
+        theme_minimal()                                                      # Aplica tema minimal
+```
+
+Nos três gráficos, os resíduos apresentam-se distribuídos aleatoriamente em torno de zero, sem evidência de heterocedasticidade, com alguns outliers. Será necessário avaliar sua influência nas estimativas do modelo final.
+
+Histograma dos resíduos padronizados:
+
+```{r}
+ggplot(setores_df, aes(x = residuo_pad_lag)) +                           # Define a variável RAZAO2 no eixo x
+        geom_histogram(fill = "lightblue", color = "black", bins = 20) + # Cria o histograma com cor de preenchimento e borda, bins = número de barras
+        labs(
+                x = "Resíduo padronizado",                               # Título do eixo x
+                y = "Número de setores"                                  # Título do eixo y
+        ) +                                                              
+        theme_minimal()                                                  # Aplica o tema minimal
+```
+
+O histograma dos resíduos padronizados apresenta distribuição aproximadamente simétrica e centrada em zero, compatível com uma distribuição normal. Há poucos valores extremos, e não se observa assimetria acentuada ou padrões irregulares, indicando boa adequação do modelo às suposições de normalidade dos resíduos”.
+
+Qq-plot para os resíduos:
+
+```{r}
+ggplot(setores_df, aes(sample = residuo_pad_lag)) +
+        stat_qq() +                                         # Plota os pontos dos quantis observados x teóricos da normal
+        stat_qq_line() +                                    # Adiciona linha de referência para indicar distribuição normal ideal
+        labs(y = "Resíduo padronizado",                     # Título do eixo Y
+             x = "Quantis da distribuição normal padrão")   # Título do eixo X
+```
+
+Teste de normalidade dos resíduos:
+
+```{r}
+ks.test(setores_df$residuo_pad_lag, "pnorm")
+```
+
+O qq-plot sugere algum desvio da Normal, mas, segundo o teste de normalidade, não há evidências suficientes para rejeitar a hipótese de normalidade.
+
+Teste de Moran para os resíduos do modelo:
+
+```{r}
+moran.test(mod.lag$residuals, matriz_pesos)
+```
+
+De acordo com o teste de Moran, os resíduos do modelo não apresentam autocorrelação espacial significativa (Moran’s I = -0.002, p = 0.487). Isso indica que, após o ajuste, a dependência espacial foi eliminada. Para avaliar a influência dos *outliers* observados anteriormente, toda a análise foi conduzida novamente sem essas observações. As estimativas (coeficientes, intervalos de confiança e p-valores) produzidas a partir da nova análise não diferiram das anteriores, de modo que os *outliers* não foram considerados pontos de influência e o modelo final foi mantido.
+
+# B. Utilizando o software GeoDA
+
+## 1. Dependência espacial da variável resposta (análogo ao item A.7.2.)
+
+### 1.1. Matriz de vizinhança espacial (análogo ao item A.7.2.1)
+
+Criar a matriz de vizinhança do tipo "queen" (considera vizinhos que compartilham borda ou vértice) e criar a matriz de pesos espaciais correspondente à vizinhança:
+
+![Abrindo a camada shapefile](GeoDa/Slide1.jpg){width="70%" fig-align="center"}
+
+![Selecionando a malha de polígonos que será lida pelo GeoDa (neste caso, a malha de setores).](GeoDa/Slide2.jpg){width="70%" fig-align="center"}
+
+![Visualizando a malha de polígonos](GeoDa/Slide3.jpg){width="70%" fig-align="center"}
+
+![Abrindo a tabela de atributos](GeoDa/Slide4.jpg){width="70%" fig-align="center"}
+
+![Criando a matriz de vizinhança: clicando no ícone "Ferramentas" e depois em "Gerenciamento de pesos"](GeoDa/Slide5.jpg){width="70%" fig-align="center"}
+
+![Clicando em "Criar"](GeoDa/Slide6.jpg){width="70%" fig-align="center"}
+
+![Selecionando a variável que contém o ID único para cada polígono](GeoDa/Slide7.jpg){width="70%" fig-align="center"}
+
+![Selecionando a variável "CD_GEOCODI"](GeoDa/Slide8.jpg){width="70%" fig-align="center"}
+
+![Escolhendo a opção "Contiguidade do tipo Rainha" e clicando em "Criar"](GeoDa/Slide9.jpg){width="70%" fig-align="center"}
+
+![Salvando a matriz de vizinhança com um nome](GeoDa/Slide10.jpg){width="70%" fig-align="center"}
+
+![Clicando em "OK"](GeoDa/Slide11.jpg){width="70%" fig-align="center"}
+
+![Clicando em "Fechar"](GeoDa/Slide12.jpg){width="70%" fig-align="center"}
+
+Criar histograma mostrando a distribuição do número de vizinhos por setor censitário:
+
+![Clicando em "Histograma" na janela de Gerenciamento de pesos](GeoDa/Slide13.jpg){width="70%" fig-align="center"}
+
+![Visualizando o histograma da matriz de vizinhança](GeoDa/Slide14.jpg){width="70%" fig-align="center"}
+
+Plotar mapa de conectividade de vizinhos com base na contiguidade "queen":
+
+![Clicando em "Mapa de Conectividade" da matriz de vizinhança](GeoDa/Slide15.jpg){width="70%" fig-align="center"}
+
+![Visualizando o Mapa de Conectividade: passando o mouse sobre os polígonos para identificar seus vizinhos considerados pela matriz](GeoDa/Slide16.jpg){width="70%" fig-align="center"}
+
+Plotar gráfico de conectividade de vizinhos com base na contiguidade "queen":
+
+![Clicando em "Gráfico de Conectividade" da matriz de vizinhança](GeoDa/Slide17.jpg){width="70%" fig-align="center"}
+
+![Visualizando o Gráfico de Conectividade](GeoDa/Slide18.jpg){width="70%" fig-align="center"}
+
+### 1.2. Índice de Moran Global (I Moran) (análogo ao item A.7.2.2)
+
+Avaliar a dependência espacial da variável resposta (RAZAO2) usando Índice de Moran Global (I Moran):
+
+![Clicando no ícone "Espaço" e selecionando "Moran's I Univariado"](GeoDa/Slide19.jpg){width="70%" fig-align="center"}
+
+![Selecionando a variável "RAZAO2"](GeoDa/Slide20.jpg){width="70%" fig-align="center"}
+
+![Visualizando o Moran Global da variável "RAZAO2"](GeoDa/Slide21.jpg){width="70%" fig-align="center"}
+
+Abordagem de Monte Carlo para avaliar significância de I Moran:
+
+![Clicando com o botão direito sobre o mapa, escolhendo 999 permutações e a opção "Randomização"](GeoDa/Slide22.jpg){width="70%" fig-align="center"}
+
+Criar histograma dos valores de I Moran estimados para padrões simulados na abordagem de Monte Carlo e criar gráfico de dispersão do I Moran para visualizar a autocorrelação espacial dos dados, mostrando como os valores de cada área estão relacionados aos valores médios das áreas vizinhas:
+
+![Visualizando o histograma resultante da permutação e o pseudo p-valor](GeoDa/Slide23.jpg){width="70%" fig-align="center"}
+
+O Índice de Moran indicou presença de dependência espacial da variável resposta (neste caso, a prevalência de mães adolescentes). Esse resultado aponta que áreas vizinhas tendem a apresentar prevalências semelhantes, evidenciando a formação de agrupamentos espaciais (clusters). Tais agrupamentos sugerem que fatores relacionados ao espaço podem estar associados às taxas de gravidez na adolescência, resultando em uma correlação espacial na distribuição observada.
+
+## 2. Análise Inferencial (análogo ao item A.8.)
+
+### 2.1. Ajuste do MRL e diagnóstico LM (análogo aos itens A.8.1.e A.8.3.)
+
+Realizar o diagnóstico de Lagrange (LM) para detectar dependência espacial nos resíduos do MRL:
+
+![Clicando no ícone "Regressão" e em seguida em "Regressão" novamente. Configurando o modelo de regressão: escolhendo "RAZAO2" como variável dependente e "IBP" e "PROPM2" como covariáveis. Rodando o modelo clássico e selecionando a opção "Arquivo de pesos".](GeoDa/Slide24.jpg){width="70%" fig-align="center"}
+
+![Visualizando os resultados da regressão – parte 1](GeoDa/Slide25.jpg){width="70%" fig-align="center"}
+
+![Visualizando os resultados da regressão – parte 2](GeoDa/Slide26.jpg){width="70%" fig-align="center"}
+
+No caso do estudo, o teste LM indicou que o melhor modelo a ser utilizado foi o modelo de defasagem espacial (SAR: Spatial Autoregression), que incorpora a dependência espacial nos dados. Esse modelo considera que o valor da variável resposta em um setor censitário é influenciado pelos valores em setores vizinhos, além das variáveis explicativas.
+
+Ressalta-se que o valor de p para o teste do I de Moran dos resíduos do MRL no GeoDa corresponde à hipótese alternativa de que o I de Moran ≠ 0. Como o software ainda não disponibiliza a opção para a hipótese alternativa I de Moran \> 0, consideramos, para fins de comparação, o valor de p dividido por dois (p = 0,032). Esse ajuste é válido porque o valor observado do I de Moran foi positivo e a distribuição gerada por randomização no GeoDa é simétrica, de modo que o resultado torna-se equivalente ao teste unicaudal realizado no R.
+
+### 2.2. Ajuste do Modelo SAR (análogo ao item A.8.4.)
+
+Ajustar o modelo SAR considerando as variáveis explicativas 'IBP' e 'PROPM2':
+
+![Clicando no ícone “Regressão” e em seguida em “Regressão” novamente.](GeoDa/Slide27.jpg){width="70%" fig-align="center"}
+
+![Configurando o modelo de regressão: mantendo a escolha de "RAZAO2" como variável dependente e "IBP" e "PROPM2" como covariáveis. Rodando o modelo regressão espacial (“Spatial Autoregression” ou “Spatial Lag”), mantendo a opção "Arquivo de pesos".](GeoDa/Slide28.jpg){width="70%" fig-align="center"}
+
+![Visualizando os resultados da regressão](GeoDa/Slide29.jpg){width="70%" fig-align="center"}
+
+![Salvando em tabela as colunas dos resíduos](GeoDa/Slide30.jpg){width="70%" fig-align="center"}
+
+![Confirmando o salvamento das variáveis](GeoDa/Slide31.jpg){width="70%" fig-align="center"}
+
+![Abrindo a tabela de atributos](GeoDa/Slide32.jpg){width="70%" fig-align="center"}
+
+![Visualizando as colunas na tabela](GeoDa/Slide33.jpg){width="70%" fig-align="center"}
+
+### 2.3. Análise de resíduos do modelo SAR (análogo ao item A.8.5.)
+
+Criando a coluna dos resíduos padronizados. O cálculo é feito a partir da subtração da média dos resíduos (que se espera ser zero) dos resíduos estimados pelo modelo e, em seguida, pela divisão do resultado pela raiz quadrada da variância residual estimada (sigma quadrado).
+
+![Copiando o valor do sigma quadrado do modelo](GeoDa/Slide34.jpg){width="70%" fig-align="center"}
+
+![Abrindo a Calculadora no ícone "Tabela"](GeoDa/Slide35.jpg){width="70%" fig-align="center"}
+
+![Na opção Univariada, aplicando o operador "Square Root" (raiz quadrada) ao valor do sigma quadrado copiado](GeoDa/Slide36.jpg){width="70%" fig-align="center"}
+
+![Clicando em "Adicionar variável" para criar a coluna "dp_erros". Selecionando a opção "after last variable" para inserir a coluna ao final da tabela](GeoDa/Slide37.jpg){width="70%" fig-align="center"}
+
+![Clicando em "Aplicar"](GeoDa/Slide38.jpg){width="70%" fig-align="center"}
+
+![Abrindo a tabela para verificar se a nova variável foi adicionada](GeoDa/Slide39.jpg){width="70%" fig-align="center"}
+
+![Verificando se a média dos resíduos é zero: clicando no ícone de boxplot, escolhendo a variável de resíduos e conferindo o valor de "mean"](GeoDa/Slide40.jpg){width="70%" fig-align="center"}
+
+![Abrindo a Calculadora, na opção Bivariada, e dividindo LAG_RESIDU pelo "dp_erros" (operador DIVIDE), criando a variável "resid_pad"](GeoDa/Slide41.jpg){width="70%" fig-align="center"}
+
+![Clicando em "Aplicar"](GeoDa/Slide42.jpg){width="70%" fig-align="center"}
+
+![Verificando se a coluna dos resíduos padronizados foi criada na tabela](GeoDa/Slide43.jpg){width="70%" fig-align="center"}
+
+Diagrama de dispersão dos resíduos padronizados em função da covariável Índice Brasileiro de Privação:
+
+![Fazendo o scatterplot dos resíduos padronizados em relação ao IBP](GeoDa/Slide44.jpg){width="70%" fig-align="center"}
+
+Diagrama de dispersão dos resíduos padronizados em função da covariável Proporção de mulheres responsáveis pelo domicílio:
+
+![Fazendo o scatterplot dos resíduos padronizados em relação ao PROPM2](GeoDa/Slide45.jpg){width="70%" fig-align="center"}
+
+Diagrama de dispersão dos resíduos padronizados em função dos valores ajustados:
+
+![Fazendo o scatterplot dos resíduos padronizados em relação aos valores preditos](GeoDa/Slide46.jpg){width="70%" fig-align="center"}
+
+Histograma dos resíduos padronizados:
+
+![Fazendo o histograma dos resíduos padronizados](GeoDa/Slide47.jpg){width="70%" fig-align="center"}
+
+Teste de Moran para os resíduos do modelo:
+
+![Calculando o Moran Global univariado dos resíduos padronizados](GeoDa/Slide48.jpg){width="70%" fig-align="center"}
+
+![Visualizando o valor do Moran e o pseudo p-valor](GeoDa/Slide49.jpg){width="70%" fig-align="center"}
+
+De acordo com o teste de Moran, os resíduos do modelo não apresentam autocorrelação espacial significativa (Moran’s I = -0.002, p = 0.487). Isso indica que, após o ajuste, a dependência espacial foi eliminada.
